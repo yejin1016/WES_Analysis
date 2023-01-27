@@ -1,0 +1,143 @@
+---
+title: "PyClone and CITUP tree build up"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+## This script is to use FACET Snakemake output to prepare PyClone input, and later use PyClone output to CITUP and compare the clusters and clonality tree
+# Load libraries
+```{r}
+library(tidyr)
+library(rhdf5)
+library(dplyr)
+```
+
+# Below are functions needed in the process
+```{r}
+# A function to combine Pyclone output and CITUP tree to compare clusters and clones
+to_make_tree = function(cluster, optimal_tree){
+cluster_filtered = cluster[order(cluster$sample_id, cluster$cluster_id),]
+  cl_count = cluster %>% group_by(cluster_id) %>% summarize(count = n()/3)
+  final = data.frame(optimal_tree$cluster_assignment, row.names = NULL)
+  edge = data.frame(t(optimal_tree$adjacency_list$block0_values))
+  final$count = cl_count$count
+  final = final[order(final$values, final$index),]
+  final$edge_from = edge$X1[match(final$values, edge$X2)]
+  colnames(final) = c("PC_cluster", "CU_cluster", "mut_count", "edge_from")
+  final = final[, c("edge_from", "CU_cluster", "PC_cluster", "mut_count")] 
+  final$PC_cluster = final$PC_cluster +1
+return(final)
+}
+
+# A function to fill in shared mutations only between two samples into the non-shared samples
+# For example, if PT and LN1 shares "Gene1" mutation but not in LN2, LN2 should have this entry "Gene1" on their Pyclone input file with VAF 0
+# If there are only two sample, this function is not needed
+fill_the_blank = function(item){
+for (mut in temp){
+  if (!mut %in% item$mutation_id){
+    item = item %>% select(mutation_id, ref_counts, var_counts, normal_cn, major_cn, minor_cn)
+    item = item %>% add_row(mutation_id = mut, ref_counts = 100, var_counts = 0, normal_cn = 2, major_cn = 2, minor_cn = 0)
+  }
+}
+  return(item)
+}
+```
+
+# Loading Pyclone input files
+```{r}
+# Change file names according to the patients
+# Using the output of Snakemake pipeline
+PT_py = read.csv("/path/to/pyclone_ready", sep="\t")
+LN1_py = read.csv("/path/to/pyclone_ready", sep="\t")
+LN2_py = read.csv("/path/to/pyclone_ready", sep="\t")
+```
+
+# Prepare them to have shared mutatoins only
+```{r}
+# Filter out non-shared mutations
+PT_py = PT_py %>% filter(mutation_id %in% LN1_py$mutation_id | mutation_id %in% LN2_py$mutation_id)
+LN1_py = LN1_py %>% filter(mutation_id %in% PT_py$mutation_id | mutation_id %in% LN2_py$mutation_id)
+LN2_py = LN2_py %>% filter(mutation_id %in% LN1_py$mutation_id | mutation_id %in% PT_py$mutation_id)
+
+# List of shared mutations
+temp = unique(rbind(PT_py, LN1_py, LN2_py)$mutation_id)
+# Purity of each sample
+purity = list(PT_py$tumour_content[1], LN1_py$tumour_content[1], LN2_py$tumour_content[1])
+```
+
+```{r}
+# Add blank entries to the samples
+# When using only two samples, this step is not needed
+PT_py = fill_the_blank(PT_py)
+LN1_py = fill_the_blank(LN1_py)
+LN2_py = fill_the_blank(LN2_py)
+```
+
+# Save the PyClone ready files
+```{r}
+# Change P## and response according to the patients
+write.table(PT_py, "/path/to/preprocessing", sep="\t", row.names = FALSE)
+write.table(LN1_py, "/path/to/preprocessing", sep="\t", row.names = FALSE)
+write.table(LN2_py, "/path/to/preprocessing", sep="\t", row.names = FALSE)
+
+# Check the purity so that to use in the PyClone argument
+print(purity)
+```
+
+## Now run PyClone
+# On terminal:
+conda activate pyclone
+
+## Change P##, response and tumor contents (purity)
+PyClone run_analysis_pipeline --in_files /DATA/l.park/general_analysis/Pyclone_trial/Preprocessing/P##_PT_MPR.tsv /DATA/l.park/general_analysis/Pyclone_trial/Preprocessing/P##_LN1_PPR.tsv /DATA/l.park/general_analysis/Pyclone_trial/Preprocessing/P##_LN2_NPR.tsv --working_dir /DATA/l.park/general_analysis/Pyclone_trial/Outputs/P## --tumour_contents 0.254 0.178 0.536 --seed 42 --burnin 1000 --samples P##_PT_MPR P##_LN1_PPR P##_LN2_NPR
+
+## Now use the outputs to CITUP
+# Prepare files for citup
+```{r}
+# Read PyClone output
+cluster = read.csv("/path/to/pyclone/output", sep="\t") ## CHANGE P# ACCORDINGLY
+
+
+cluster_filtered = cluster[order(factor(cluster$sample_id,levels=c(c("P##_PT_NPR", "P##_LN1_MPR", "P##_LN2_NPR"))), cluster$cluster_id),]
+len = length(cluster_filtered$cluster_id)
+
+write.table(cluster_filtered$cluster_id[1:(len/3)], "/path/to/citup/P##_cluster.txt", row.names = FALSE, col.names = FALSE)
+
+mut_freq = data.frame(cluster_filtered$variant_allele_frequency[1:(len/3)], cluster_filtered$variant_allele_frequency[((len/3)+1):(2*(len/3))], cluster_filtered$variant_allele_frequency[((2*(len/3))+1):len])
+write.table(mut_freq, "/path/to/citup/P##_freq.txt", row.names = FALSE, col.names = FALSE)
+
+```
+
+
+# Now run citup
+# Recommendation : use two "Screen" tabs one for Pyclone and one for CITUP and switch
+conda activate py2
+
+run_citup_qip.py /DATA/l.park/general_analysis/Pyclone_trial/citup/P##_freq.txt /DATA/l.park/general_analysis/Pyclone_trial/citup/P##_cluster.txt /DATA/l.park/general_analysis/Pyclone_trial/citup/Outputs/P##_result.h5 --submit local
+
+# Read CITUP output
+```{r}
+# Read the output
+citup_h5 = H5Fopen("/path/to/citup/Outputs/P##_result.h5") ## CHANGE P# ACCORDINGLY
+
+# Check the optimal tree number
+citup_h5$results$optimal
+```
+
+```{r}
+# Assign optimal tree into a variable, so that it can be used on the "to_make_tree" function
+optimal_tree = citup_h5$trees$'##' # Change optimal tree number
+```
+
+```{r}
+# Show the tree assignment with a table
+# Which clusters are assigned to which clones, how many shared mutations are in there
+to_make_tree(cluster, optimal_tree)
+```
+
+
+
+

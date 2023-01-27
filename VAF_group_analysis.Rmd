@@ -1,0 +1,118 @@
+---
+title: "VAF group analysis"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+## This script is for normalized VAF comparison between responding and non-responding group
+## Needed files are filtered maf file created for PyClone
+
+# Load libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(rstatix)
+library(tidyr)
+```
+
+# Loading filtered maf files
+```{r}
+# Load the list of sample name and their responses
+res_group = read.csv("/path/to/mut_groups.csv", header = FALSE)
+
+# Load all the filtered maf files
+mut_filtered_files = list.files(path = "/path/to/maf/files", pattern = "*.tsv",full.names = TRUE)
+
+# Combine all of them into a dataframe
+dfs = mut_filtered_files %>% lapply(read.csv, sep="\t") %>% bind_rows()
+
+# Extract only gene name and make a column
+dfs = dfs %>% mutate(mut_gene = gsub("[\\(\\)]", "", regmatches(mutation_id, gregexpr("\\(.*?\\)", mutation_id))))
+
+# Add vaf column
+dfs = dfs %>% mutate(vaf = var_counts/(ref_counts + var_counts))
+
+# Add response column
+dfs$response = res_group$V2[match(dfs$sample_id, res_group$V1)]
+```
+
+# Normalize VAFs
+```{r}
+# Normalizing
+dfs_grouped_sample = dfs %>% group_by(sample_id) %>% mutate(vaf_mean = mean(vaf))
+dfs_grouped_sample = dfs_grouped_sample %>% mutate(vaf_norm = (vaf-vaf_mean)/sd(vaf))
+dfs_grouped_sample = dfs_grouped_sample %>% ungroup() %>% group_by(mut_gene)
+
+# Drop out unnecessary columns
+dfs_grouped_sample = dfs_grouped_sample %>% select(mutation_id, sample_id, mut_gene, vaf_norm, response)
+```
+
+# Filter to have genes with more than 6 entries in either one of the groups
+```{r}
+# Count the genes entry
+count_gene = dfs_grouped_sample %>% group_by(mut_gene, response) %>% summarize(count = n()) %>% filter(count>=7)
+
+# Making a list of the genes with more than 6 entries
+gene_list = unique(count_gene$mut_gene)
+
+# Filter dataframe based on the list
+df_filtered = dfs_grouped_sample %>% filter(mut_gene %in% gene_list)
+
+# Put "High" or "Low" tag based on the normalized VAF
+df_filtered = df_filtered %>% mutate(cat = case_when(vaf_norm >=0 ~ "High", vaf_norm <0 ~ "Low"))
+df_filtered = df_filtered %>% select(sample_id, mut_gene, response, cat) %>% ungroup()
+
+# When a sample do not have the gene on the gene list, add an entrie with "None" tag
+for (mut in gene_list){
+  for (sample in unique(df_filtered$sample_id)){
+    if (!mut %in% df_filtered[df_filtered$sample_id == sample, ]$mut_gene){
+      df_filtered = df_filtered %>% add_row(sample_id = sample, mut_gene = mut, response = df_filtered[df_filtered$sample_id == sample, ]$response[1], cat = "None")
+    }
+  }
+}                                     
+```
+
+# Plot the VAF categories to compare two groups
+```{r}
+# Barplot to compare the responding and non-responding group
+png("/path/to/plots/VAF_category_comparison.png", width = 1000, height = 600, unit = "px")
+ggplot(df_filtered,aes(x=factor(response,levels=c(c("Responsive", "Non_responsive"))), fill=cat))+
+  geom_bar()+
+  facet_grid(cols = vars(mut_gene),) + scale_x_discrete(labels=c("R", "N")) + labs(fill = "VAF Category", x = "Key Mutations", y = "Count", title = "Mutation Counts Between Responding and Non-responding Groups") + theme(plot.title = element_text(hjust = 0.5), strip.text.x = element_text(angle = 90))
+```
+
+# Fisher's exact test
+```{r}
+# Take the data frame and perform Fisher's Exact Test
+fisher_t = function(df) {
+  o = data.frame()
+  cat = c("High", "Low", "None")
+  for (mut in gene_list){
+  test = data.frame(df[df$mut_gene == mut,] %>% group_by(response, cat) %>% summarize(n()))
+  test = test %>% spread(cat, n..)
+  test[is.na(test)] = 0
+  for (c in cat){
+  if (!c %in% colnames(test)){
+    test[c] = 0
+  }
+  }
+test = test %>% select(response, High, Low, None)
+res = unlist(test[test$response == "Responsive",2:4])
+no_res = unlist(test[test$response == "Non_responsive",2:4])
+xtab = as.table(rbind(res, no_res))
+t = fisher_test(xtab)
+t$mut_gene = mut
+o = rbind(o, t)
+  }
+  return(o)
+}
+```
+
+# Perform the test
+```{r}
+fisher_t(df_filtered)
+```

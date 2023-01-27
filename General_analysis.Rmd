@@ -1,0 +1,117 @@
+---
+title: "General Analysis"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+
+## This script is for oncoplot(co-oncoplot) and VAF distribution comparison
+```{r}
+library(maftools)
+```
+
+```{r}
+# Grouping primary tumor and lymph nodes based on their response manually
+MPR_PT_list = c("List of mafs")
+
+MPR_LN_list = c("List of mafs")
+
+NPR_PT_list = c("List of mafs")
+
+NPR_LN_list = c("List of mafs")
+
+PPR_PT_list = c("List of mafs")
+
+PPR_LN_list = c("List of mafs")
+
+PT_list = c("List of mafs")
+
+LN_list = c("List of mafs")
+```
+
+```{r}
+# Merge PT and LN into single maf file and add their pathological response and sample type to clinical data tab
+MPR_PTs = merge_mafs(lapply(MPR_PT_list, read.maf))
+MPR_PTs@clinical.data$Response = "MPR"
+MPR_PTs@clinical.data$Type = "Tumor"
+
+NPR_PTs = merge_mafs(lapply(NPR_PT_list, read.maf))
+NPR_PTs@clinical.data$Response = "NPR"
+NPR_PTs@clinical.data$Type = "Tumor"
+
+PPR_PTs = merge_mafs(lapply(PPR_PT_list, read.maf))
+PPR_PTs@clinical.data$Response = "PPR"
+PPR_PTs@clinical.data$Type = "Tumor"
+
+MPR_LNs = merge_mafs(lapply(MPR_LN_list, read.maf))
+MPR_LNs@clinical.data$Response = "MPR"
+MPR_LNs@clinical.data$Type = "Lymph_Node"
+
+NPR_LNs = merge_mafs(lapply(NPR_LN_list, read.maf))
+NPR_LNs@clinical.data$Response = "NPR"
+NPR_LNs@clinical.data$Type = "Lymph_Node"
+
+PPR_LNs = merge_mafs(lapply(PPR_LN_list, read.maf))
+PPR_LNs@clinical.data$Response = "PPR"
+PPR_LNs@clinical.data$Type = "Lymph_Node"
+```
+```{r}
+# Merge once more, based on responding group
+Res = merge_mafs(c(MPR_PTs, PPR_PTs, MPR_LNs, PPR_LNs))
+Non_res = merge_mafs(c(NPR_PTs, NPR_LNs))
+
+# Then merge them all into one maf item
+all_maf = merge_mafs(c(MPR_PTs, MPR_LNs, NPR_PTs, NPR_LNs, PPR_PTs, PPR_LNs))
+```
+
+## Below is oncoplot and oncoplot for general analysis
+```{r}
+# First oncoplot with all_maf file
+png("/path/to/plots/general_oncoplot.png", width = 600, height = 400, unit = "px")
+oncoplot(all_maf, clinicalFeatures = c("Response", "Type"), sortByAnnotation = TRUE, showTumorSampleBarcodes = TRUE, titleText = " \nGeneral Oncoplot of Primary Tumor and Lymph Node", titleFontSize = 1.5)
+```
+```{r}
+# A co-oncoplot comparing responding vs non-responding groups
+coOncoplot(m1 = Res, m2 = Non_res, m1Name = "Responder", m2Name = "Non-responders", showSampleNames = TRUE)
+```
+
+
+## Below is to compare the distribution of variant allele frequency
+```{r}
+# Merge PT and LN separately and add their type as an data
+PTs = merge_mafs(c(MPR_PTs, PPR_PTs, NPR_PTs))
+LNs = merge_mafs(c(MPR_LNs, PPR_LNs, NPR_LNs))
+
+PTs@data$type = "Tumor"
+LNs@data$type = "Lymph_Node"
+
+# Merge two maf files from previous step and add VAF as a column
+merged = merge_mafs(c(PTs, LNs))
+merged@data$vaf = merged@data$t_alt_count/(merged@data$t_alt_count + merged@data$t_ref_count)
+```
+
+```{r}
+# Convert merged_maf into a dataframe only with with sample name, type, and VAF
+new_df = data.frame(merged@data$Tumor_Sample_Barcode, merged@data$type, merged@data$vaf)
+colnames(new_df) = c("sample_id", "type", "vaf")
+
+# A list made manually to convert file name into patient and sample name
+sample_replace = c("list of pairs of sample name and patients")
+
+# color PT and LN differently
+color_scale = c("list of colors")
+
+# Convert the sample_id from file name to patient and sample number
+new_df$sample_id <- str_replace_all(new_df$sample_id, sample_replace, )
+```
+
+
+```{r}
+# Distribution plot of VAF, color blue for PT and red for LN
+png("/path/to/plots/VAF_distribution.png", width = 600, height = 400, unit = "px")
+ggplot(new_df) + geom_density(aes(x=vaf, colour=sample_id,), size = .3) + scale_color_manual(values = color_scale) + guides(color = FALSE) + labs(x = "Variant Allele Frequency", y= "Density") + theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=17,face="bold"))
+```

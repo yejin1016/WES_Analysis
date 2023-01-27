@@ -1,0 +1,52 @@
+---
+title: "Cooncoplot comparison PT vs LN, LNM vs no-LNM"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+# Load library
+```{r}
+library(maftools)
+```
+
+## Below is to use co-oncoplot on primary tumor and lymph nodes
+# Manually list the PT and LN
+```{r}
+PT_list = list("list of primary tumor maf files")
+LN_list = list("list of lymph node maf files")
+```
+
+# Merge PT and LN separately
+```{r}
+PT_loaded = merge_mafs(lapply(PT_list, read.maf))
+LN_loaded = merge_mafs(lapply(LN_list, read.maf))
+```
+
+# Plot co-oncoplot to compare PT and LN
+```{r}
+png("/path/to/plots/PT_vs_LN.png", width = 600, height = 400, unit = "px")
+coOncoplot(PT_loaded, LN_loaded, m1Name = "Primary Tumor", m2Name = "Lymph Node")
+```
+
+## Below is to use co-oncoplot on lymph node metastasis group and no metastasis group
+# Manually list the LNM and no-LNM
+```{r}
+LNM_list = list("list of lymph node metastasized sample maf files")
+
+no_LNM_list = list("list of no metastasized sample maf files")
+```
+
+# Merge LNM and no-LNM separately
+```{r}
+LNM_loaded = merge_mafs(lapply(LNM_list, read.maf))
+no_LNM_loaded = merge_mafs(lapply(no_LNM_list, read.maf))
+```
+
+# Plot co-oncoplot to compare LNM and no-LNM
+```{r}
+png("/path/to/plots/LNM_vs_noLNM.png", width = 600, height = 400, unit = "px")
+coOncoplot(m1 = LNM_loaded, m2 = no_LNM_loaded, m1Name = "LNM Group", m2Name = "No-LNM Group")
+```

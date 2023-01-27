@@ -1,0 +1,89 @@
+---
+title: "VAF on chromosome map plot for shared mutatoin comparison"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+## This script is to compare shared mutatoins between samples on VAF to chromosome map
+# Source from basic function script
+```{r}
+source("/path/to/scripts/VAF_plot_basic_functions.R")
+```
+
+# Loading data
+```{r}
+# Tumor
+PT_cna = read.csv("/path/to/FACET_file") # Change file name accordingly
+PT_mutations = read.csv("/path/to/maf_file", sep="\t", header=FALSE) # Change file name accordingly
+
+# First LN
+LN1_cna = read.csv("/path/to/FACET_file") # Change file name accordingly
+LN1_mutations = read.csv("/path/to/maf_file", sep="\t", header=FALSE) # Change file name accordingly
+
+# Second LN
+LN2_cna = read.csv("/path/to/FACET_file") # Change file name accordingly
+LN2_mutations = read.csv("/path/to/maf_file", sep="\t", header=FALSE) # Change file name accordingly
+
+```
+
+# Sign them as CNAqc objects
+# This takes in account both FACET CNA analysis and maf muation annotation VAF
+```{r}
+PT = init(mutations = trimming_mutations(PT_mutations),
+          cna = trimming_cna(PT_cna),
+          purity = getting_purity(PT_cna),
+          ref = "hg38")
+LN1 = init(mutations = trimming_mutations(LN1_mutations),
+          cna = trimming_cna(LN1_cna),
+          purity = getting_purity(LN1_cna),
+          ref = "hg38")
+
+LN2 = init(mutations = trimming_mutations(LN2_mutations),
+          cna = trimming_cna(LN2_cna),
+          purity = getting_purity(LN2_cna),
+          ref = "hg38")
+
+```
+# Preproceccing before plotting
+```{r}
+# Add mut_id
+PT = adding_mut_id(PT)
+LN1 = adding_mut_id(LN1)
+LN2 = adding_mut_id(LN2)
+
+# Add sample name column
+PT$mutations$name = "PT"
+LN1$mutations$name = "LN1"
+LN2$mutations$name = "LN2"
+
+# Add "shared" category
+PT$mutations$shared[PT$mutations$mut_id %in% LN1$mutations$mut_id & PT$mutations$mut_id %in% LN2$mutations$mut_id] = "All_Shared"
+PT$mutations$shared[PT$mutations$mut_id %in% LN1$mutations$mut_id & !(PT$mutations$mut_id %in% LN2$mutations$mut_id)] = "PT_LN1_Shared"
+PT$mutations$shared[!(PT$mutations$mut_id %in% LN1$mutations$mut_id) & PT$mutations$mut_id %in% LN2$mutations$mut_id] = "PT_LN2_Shared"
+LN1$mutations$shared[LN1$mutations$mut_id %in% PT$mutations$mut_id & LN1$mutations$mut_id %in% LN2$mutations$mut_id] = "All_Shared"
+LN1$mutations$shared[LN1$mutations$mut_id %in% PT$mutations$mut_id & !(LN1$mutations$mut_id %in% LN2$mutations$mut_id)] = "PT_LN1_Shared"
+LN1$mutations$shared[!(LN1$mutations$mut_id %in% PT$mutations$mut_id) & LN1$mutations$mut_id %in% LN2$mutations$mut_id] = "LN1_LN2_Shared"
+LN2$mutations$shared[LN2$mutations$mut_id %in% PT$mutations$mut_id & LN2$mutations$mut_id %in% LN1$mutations$mut_id] = "All_Shared"
+LN2$mutations$shared[LN2$mutations$mut_id %in% PT$mutations$mut_id & !(LN2$mutations$mut_id %in% LN1$mutations$mut_id)] = "PT_LN2_Shared"
+LN2$mutations$shared[!(LN2$mutations$mut_id %in% PT$mutations$mut_id) & LN2$mutations$mut_id %in% LN1$mutations$mut_id] = "LN1_LN2_Shared"
+PT$mutations$shared[is.na(PT$mutations$shared)] = "Unique"
+LN1$mutations$shared[is.na(LN1$mutations$shared)] = "Unique"
+LN2$mutations$shared[is.na(LN2$mutations$shared)] = "Unique"
+```
+
+# Call the plot function to assign variables
+```{r}
+PT_plot = plot_nonsyno_mut_VAF(PT, "PT (#PR)") # Change PR accordingly
+LN1_plot = plot_nonsyno_mut_VAF(LN1, "LN1 (#PR)") # Change PR accordingly
+LN2_plot = plot_nonsyno_mut_VAF(LN2, "LN2 (#PR)") # Change PR accordingly
+```
+
+# Save the plots
+```{r}
+png(filename="/path/to/plots", width = 900, height = 1000, unit = "px") # Change P## accordingly
+gridExtra::grid.arrange(PT_plot, LN1_plot, LN2_plot, nrow = 3, top = grid::textGrob("P## VAF Comparison Based on Shared Mutations",gp=grid::gpar(fontsize=28,font=1))) # Change P## accordingly
+```
+

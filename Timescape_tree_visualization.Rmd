@@ -1,0 +1,113 @@
+---
+title: "Phylogenetic Tree Build-up Pipeline"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+
+## This script uses Pyclone-vi output to build a tree using CITUP and Timescape, but can be used for PyClone output
+
+# Load all the libraries needed
+```{r}
+library(dplyr)
+library(tidyr)
+library(timescape)
+```
+
+
+# Read Pyclone-VI ready files of each patients
+```{r}
+PT = read.csv("/path/to/PT_file", sep="\t") ## Change file name for the patient's tumor
+LN_01 = read.csv("/path/to/LN1_file", sep="\t") ## Change file name for the patient's lymph node
+LN_02 = read.csv("/path/to/LN2_file", sep="\t") ## Change file name for the patient's lymph node
+```
+
+# Combine them to one Pyclone-VI input file and save
+```{r}
+Pyclone_vi_ready = bind_rows(list(PT, LN_01, LN_02))
+write.table(Pyclone_vi_ready, "P##_Pyclone_vi_ready.tsv", sep="\t") ## CHANGE P# ACCORDINGLY
+```
+
+## On terminal, activate "conda activate snakemake_run" and run Pyclone-vi
+# pyclone-vi fit -i "ready file" -o "temp.output.h5" -c 40 --seed 42
+# Then make final output
+# pyclone-vi write-results-file -i "temp.output.h5" -o "sample_cluster.tsv"
+
+# Combind pyclone-vi ready file and the cluster information together, to add vaf on cluster file.
+```{r}
+cluster = read.csv("P##_cluster.tsv", sep="\t") ## CHANGE P# ACCORDINGLY
+cluster_filtered = cluster %>% 
+  group_by(cluster_id) %>% 
+  filter(n() >= 15) %>% 
+  ungroup()
+mutations = cluster_filtered$mutation_id
+
+Pyclone_vi_ready_filtered = filter(Pyclone_vi_ready, Pyclone_vi_ready$mutation_id %in% mutations)
+
+cluster_filtered = cluster_filtered[order(cluster_filtered$sample_id,cluster_filtered$mutation_id),]
+Pyclone_vi_ready_filtered = Pyclone_vi_ready_filtered[order(Pyclone_vi_ready_filtered$sample_id,Pyclone_vi_ready_filtered$mutation_id),]
+
+cluster_filtered$vaf = Pyclone_vi_ready_filtered$alt_counts/(Pyclone_vi_ready_filtered$ref_counts+Pyclone_vi_ready_filtered$alt_counts)
+```
+
+# Modify cluster file to split them for CITUP input
+```{r}
+citup_pre = cluster_filtered[order(cluster_filtered$sample_id, cluster_filtered$cluster_id),]
+citup_pre$cellular_prevalence = NULL
+citup_pre$cellular_prevalence_std = NULL
+citup_pre$cluster_assignment_prob = NULL
+```
+
+
+```{r}
+write.table(citup_pre$cluster_id[1:(length(citup_pre$cluster_id)/3)],"P##_cluster.txt", row.names = FALSE, col.names = FALSE) ## CHANGE P# ACCORDINGLY
+
+vaf_LN_01 = citup_pre$vaf[1:(length(citup_pre$cluster_id)/3)]
+vaf_LN_02 = citup_pre$vaf[(length(citup_pre$cluster_id)/3+1):(length(citup_pre$cluster_id)/3*2)]
+vaf_PT = citup_pre$vaf[(length(citup_pre$cluster_id)/3*2+1):length(citup_pre$cluster_id)]
+
+vafs = data.frame(vaf_PT, vaf_LN_01, vaf_LN_02)
+write.table(vafs, "P##_freq.txt", row.names = FALSE, col.names = FALSE) ## CHANGE P# ACCORDINGLY
+```
+
+## Time to run citup
+# deactivate snakemake_run, activate "py2"
+# run_citup_qip.py P##_freq.txt P##_cluster.txt P##_results.h5 --submit local
+
+
+## Use timescape to visualize the results
+# Read CITUP output and call the optimal tree
+```{r}
+citup_h5 = H5Fopen("P##_results.h5") ## CHANGE P# ACCORDINGLY
+```
+
+# Check the optimal tree number
+```{r}
+citup_h5$results$optimal
+```
+
+# Read the optimal tree and prepare for the Timescape visualization
+```{r}
+optimal_tree = citup_h5$trees$'5'$adjacency_list # Use the optimal number
+optimal_freq = citup_h5$trees$'5'$clone_freq # Use the optimal number
+prev = data.frame(optimal_freq$block0_values)
+colnames(prev) = c("PT", "LN_01", "LN_02")
+
+prev = prev %>%
+  gather('PT','LN_01', 'LN_02',key='timepoint',value='clonal_prev')
+prev$clone_id = seq(0,3)
+
+edge = data.frame(t(optimal_tree$block0_values))
+colnames(edge) = c("source", "target")
+
+colour=c("#bded7b", "#f2c58a", "#fcc2c8", "#8f98e8", "#ffe6c4", "#9ef470")
+clonecolours=data.frame(clone_id=seq(0,3),colour=colour[1:4])
+```
+
+# Visualize tree with Timescape
+```{r}
+timescape(prev, edge, clone_colours = clonecolours)
+```
